@@ -1,0 +1,13 @@
+# Chaves e segredos descriptografados
+*.agekey
+keys.txt
+.env
+*.dec.*
+*.decrypted.*
+
+# Ansible
+*.retry
+
+# Python
+.venv/
+__pycache__/
