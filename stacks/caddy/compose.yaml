@@ -1,6 +1,6 @@
 services:
   caddy:
-    image: caddy:2
+    image: caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
     restart: unless-stopped
     command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile --watch
     ports:
