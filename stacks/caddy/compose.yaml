@@ -2,11 +2,12 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile --watch
     ports:
       - 80:80
       - 443:443
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./config:/etc/caddy:ro
       - ./site:/srv/site:ro
       - caddy-data:/data
       - caddy-config:/config

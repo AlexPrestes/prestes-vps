@@ -11,5 +11,5 @@ executions = [
 [[procedure.config.stage]]
 name = "Deploy do que mudou"
 executions = [
-  { execution.type = "BatchDeployStackIfChanged", execution.params.pattern = "*" },
+  { execution.type = "BatchDeployStack", execution.params.pattern = "*" },
 ]
