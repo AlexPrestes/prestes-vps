@@ -16,13 +16,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks: [db]
+    networks: [db, db-authentik]
 
 volumes:
   pg-data:
 
 networks:
   db:
+    internal: true
+  db-authentik:
+    name: db-authentik
     internal: true
 
 secrets:

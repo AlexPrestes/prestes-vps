@@ -23,3 +23,12 @@ repo = "AlexPrestes/prestes-vps"
 branch = "main"
 run_directory = "stacks/garage"
 pre_deploy.command = "sh /etc/komodo/stacks/garage/scripts/decrypt-secrets.sh /etc/komodo/stacks/garage/stacks/garage"
+
+[[stack]]
+name = "authentik"
+[stack.config]
+server = "prestes-vps"
+repo = "AlexPrestes/prestes-vps"
+branch = "main"
+run_directory = "stacks/authentik"
+pre_deploy.command = "sh /etc/komodo/stacks/authentik/scripts/decrypt-secrets.sh /etc/komodo/stacks/authentik/stacks/authentik 1000 && sh /etc/komodo/stacks/authentik/scripts/pg-provision.sh authentik /etc/komodo/stacks/authentik/stacks/authentik/.secrets/AUTHENTIK_DB_PASSWORD"

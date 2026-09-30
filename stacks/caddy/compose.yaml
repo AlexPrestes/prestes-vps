@@ -11,7 +11,7 @@ services:
       - ./site:/srv/site:ro
       - caddy-data:/data
       - caddy-config:/config
-    networks: [default, edge-komodo]
+    networks: [default, edge-komodo, edge-authentik]
 
 volumes:
   caddy-data:
@@ -20,4 +20,6 @@ volumes:
 networks:
   default:
   edge-komodo:
+    external: true
+  edge-authentik:
     external: true

@@ -11,3 +11,7 @@ deploy.prestes.cloud {
 		respond "Em breve" 403
 	}
 }
+
+auth.prestes.cloud {
+	reverse_proxy authentik:9000
+}

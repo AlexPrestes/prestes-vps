@@ -1,0 +1,47 @@
+x-authentik: &authentik
+  image: ghcr.io/goauthentik/server:2026.8.3
+  restart: unless-stopped
+  environment:
+    AUTHENTIK_SECRET_KEY: file:///run/secrets/AUTHENTIK_SECRET_KEY
+    AUTHENTIK_POSTGRESQL__HOST: postgres
+    AUTHENTIK_POSTGRESQL__NAME: authentik
+    AUTHENTIK_POSTGRESQL__USER: authentik
+    AUTHENTIK_POSTGRESQL__PASSWORD: file:///run/secrets/AUTHENTIK_DB_PASSWORD
+    AUTHENTIK_BOOTSTRAP_PASSWORD: file:///run/secrets/AUTHENTIK_BOOTSTRAP_PASSWORD
+    AUTHENTIK_BOOTSTRAP_EMAIL: alex@prestes.cloud
+  secrets:
+    - AUTHENTIK_SECRET_KEY
+    - AUTHENTIK_DB_PASSWORD
+    - AUTHENTIK_BOOTSTRAP_PASSWORD
+
+services:
+  server:
+    <<: *authentik
+    command: server
+    mem_limit: 1g
+    networks:
+      default:
+      db-authentik:
+      edge:
+        aliases: [authentik]
+
+  worker:
+    <<: *authentik
+    command: worker
+    mem_limit: 768m
+    networks: [default, db-authentik]
+
+networks:
+  default:
+  db-authentik:
+    external: true
+  edge:
+    name: edge-authentik
+
+secrets:
+  AUTHENTIK_SECRET_KEY:
+    file: ./.secrets/AUTHENTIK_SECRET_KEY
+  AUTHENTIK_DB_PASSWORD:
+    file: ./.secrets/AUTHENTIK_DB_PASSWORD
+  AUTHENTIK_BOOTSTRAP_PASSWORD:
+    file: ./.secrets/AUTHENTIK_BOOTSTRAP_PASSWORD

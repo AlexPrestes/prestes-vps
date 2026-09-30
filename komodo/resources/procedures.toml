@@ -1,6 +1,6 @@
 [[procedure]]
 name = "deploy-on-push"
-description = "Sincroniza os recursos e faz deploy dos stacks alterados"
+description = "Sincroniza os recursos e faz deploy em ordem: dados, aplicações, borda"
 
 [[procedure.config.stage]]
 name = "Sync"
@@ -9,7 +9,19 @@ executions = [
 ]
 
 [[procedure.config.stage]]
-name = "Deploy do que mudou"
+name = "Dados"
 executions = [
-  { execution.type = "BatchDeployStack", execution.params.pattern = "*" },
+  { execution.type = "BatchDeployStack", execution.params.pattern = "postgres, garage" },
+]
+
+[[procedure.config.stage]]
+name = "Aplicações"
+executions = [
+  { execution.type = "BatchDeployStack", execution.params.pattern = "authentik" },
+]
+
+[[procedure.config.stage]]
+name = "Borda"
+executions = [
+  { execution.type = "BatchDeployStack", execution.params.pattern = "caddy" },
 ]
