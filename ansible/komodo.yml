@@ -24,12 +24,28 @@
         mode: "0640"
       loop: [compose.yaml, compose.env]
 
+    - name: Diretório de segredos
+      ansible.builtin.file: { path: "{{ komodo_dir }}/.secrets", state: directory, mode: "0700" }
+
+    # Um arquivo por chave, montado em /run/secrets pelo Compose.
+    # O Mongo lê os seus já como o usuário mongodb (uid 999).
     - name: Segredos descriptografados
       ansible.builtin.copy:
-        content: "{{ lookup('community.sops.sops', komodo_src + '/secrets.enc.env', input_type='dotenv', output_type='dotenv') }}"
-        dest: "{{ komodo_dir }}/.env"
-        mode: "0600"
+        content: "{{ (lookup('community.sops.sops', komodo_src + '/secrets.enc.env', input_type='dotenv', output_type='json') | from_json)[item.key] }}"
+        dest: "{{ komodo_dir }}/.secrets/{{ item.key }}"
+        owner: "{{ item.owner }}"
+        mode: "0400"
+      loop:
+        - { key: KOMODO_DATABASE_USERNAME, owner: "999" }
+        - { key: KOMODO_DATABASE_PASSWORD, owner: "999" }
+        - { key: KOMODO_INIT_ADMIN_PASSWORD, owner: root }
+        - { key: KOMODO_WEBHOOK_SECRET, owner: root }
+        - { key: KOMODO_JWT_SECRET, owner: root }
+      loop_control: { label: "{{ item.key }}" }
       no_log: true
+
+    - name: Remove o .env antigo (segredos em variáveis de ambiente)
+      ansible.builtin.file: { path: "{{ komodo_dir }}/.env", state: absent }
 
     - name: Sobe o Komodo
       community.docker.docker_compose_v2:
