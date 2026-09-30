@@ -7,12 +7,9 @@ x-authentik: &authentik
     AUTHENTIK_POSTGRESQL__NAME: authentik
     AUTHENTIK_POSTGRESQL__USER: authentik
     AUTHENTIK_POSTGRESQL__PASSWORD: file:///run/secrets/AUTHENTIK_DB_PASSWORD
-    AUTHENTIK_BOOTSTRAP_PASSWORD: file:///run/secrets/AUTHENTIK_BOOTSTRAP_PASSWORD
-    AUTHENTIK_BOOTSTRAP_EMAIL: alex@prestes.cloud
   secrets:
     - AUTHENTIK_SECRET_KEY
     - AUTHENTIK_DB_PASSWORD
-    - AUTHENTIK_BOOTSTRAP_PASSWORD
 
 services:
   server:
@@ -28,6 +25,10 @@ services:
   worker:
     <<: *authentik
     command: worker
+    secrets:
+      - AUTHENTIK_SECRET_KEY
+      - AUTHENTIK_DB_PASSWORD
+      - AKADMIN_PASSWORD
     mem_limit: 768m
     networks: [default, db-authentik]
 
@@ -43,5 +44,5 @@ secrets:
     file: ./.secrets/AUTHENTIK_SECRET_KEY
   AUTHENTIK_DB_PASSWORD:
     file: ./.secrets/AUTHENTIK_DB_PASSWORD
-  AUTHENTIK_BOOTSTRAP_PASSWORD:
-    file: ./.secrets/AUTHENTIK_BOOTSTRAP_PASSWORD
+  AKADMIN_PASSWORD:
+    file: ./.secrets/AKADMIN_PASSWORD
