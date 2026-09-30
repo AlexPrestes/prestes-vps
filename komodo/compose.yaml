@@ -11,6 +11,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${KOMODO_DATABASE_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
+    networks: [db]
 
   core:
     image: ghcr.io/moghtech/komodo-core:2
@@ -27,6 +28,11 @@ services:
     volumes:
       - keys:/config/keys
       - /etc/komodo/backups:/backups
+    networks:
+      default:
+      db:
+      edge:
+        aliases: [komodo-core]
 
   periphery:
     image: ghcr.io/moghtech/komodo-periphery:2
@@ -41,8 +47,16 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc:/proc
       - /etc/komodo:/etc/komodo
+    networks: [default]
 
 volumes:
   mongo-data:
   mongo-config:
   keys:
+
+networks:
+  default:
+  db:
+    internal: true
+  edge:
+    name: edge-komodo

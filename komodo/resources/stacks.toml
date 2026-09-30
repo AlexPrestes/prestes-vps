@@ -1,0 +1,7 @@
+[[stack]]
+name = "caddy"
+[stack.config]
+server = "prestes-vps"
+repo = "AlexPrestes/prestes-vps"
+branch = "main"
+run_directory = "stacks/caddy"

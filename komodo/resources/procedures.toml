@@ -1,0 +1,15 @@
+[[procedure]]
+name = "deploy-on-push"
+description = "Sincroniza os recursos e faz deploy dos stacks alterados"
+
+[[procedure.config.stage]]
+name = "Sync"
+executions = [
+  { execution.type = "RunSync", execution.params.sync = "prestes-vps" },
+]
+
+[[procedure.config.stage]]
+name = "Deploy do que mudou"
+executions = [
+  { execution.type = "BatchDeployStackIfChanged", execution.params.pattern = "*" },
+]

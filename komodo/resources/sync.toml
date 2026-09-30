@@ -1,0 +1,6 @@
+[[resource_sync]]
+name = "prestes-vps"
+[resource_sync.config]
+repo = "AlexPrestes/prestes-vps"
+branch = "main"
+resource_path = ["komodo/resources"]

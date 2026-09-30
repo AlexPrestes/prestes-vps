@@ -1,0 +1,13 @@
+prestes.cloud {
+	root * /srv/site
+	file_server
+}
+
+deploy.prestes.cloud {
+	handle /listener/* {
+		reverse_proxy komodo-core:9120
+	}
+	handle {
+		respond "Em breve" 403
+	}
+}
