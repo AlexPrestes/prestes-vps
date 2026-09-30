@@ -1,0 +1,171 @@
+- name: Bootstrap da VPS
+  hosts: prestes-vps
+  become: true
+  vars:
+    admin_user: alex.prestes
+    admin_pubkey: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+    timezone: America/Sao_Paulo
+    swap_size_mb: 2048
+    sops_version: v3.13.3
+    age_key_src: "{{ lookup('env', 'HOME') }}/.config/sops/age/prestes-vps.agekey"
+
+  handlers:
+    - name: restart ssh
+      ansible.builtin.service: { name: ssh, state: restarted }
+    - name: restart fail2ban
+      ansible.builtin.service: { name: fail2ban, state: restarted }
+
+  tasks:
+    # --- Sistema ---
+    - name: Atualiza pacotes
+      ansible.builtin.apt: { update_cache: true, upgrade: dist }
+
+    - name: Instala pacotes base
+      ansible.builtin.apt:
+        name:
+          [
+            ufw,
+            fail2ban,
+            python3-systemd,
+            unattended-upgrades,
+            ca-certificates,
+            curl,
+            age,
+            sudo,
+          ]
+        state: present
+
+    - name: Define fuso horário
+      community.general.timezone: { name: "{{ timezone }}" }
+
+    - name: Ativa atualizações automáticas
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    # --- Swap ---
+    - name: Cria swapfile
+      ansible.builtin.command: "fallocate -l {{ swap_size_mb }}M /swapfile"
+      args: { creates: /swapfile }
+      register: swapfile
+
+    - name: Formata e ativa swap
+      ansible.builtin.shell: chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+      when: swapfile.changed
+
+    - name: Registra swap no fstab
+      ansible.posix.mount:
+        { src: /swapfile, path: none, fstype: swap, opts: sw, state: present }
+
+    # --- Usuário admin ---
+    - name: Cria usuário admin
+      ansible.builtin.user: { name: "{{ admin_user }}", shell: /bin/bash }
+
+    - name: Instala chave SSH do admin
+      ansible.posix.authorized_key:
+        { user: "{{ admin_user }}", key: "{{ admin_pubkey }}", exclusive: true }
+
+    - name: Sudo sem senha para o admin
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/90-{{ admin_user | replace('.', '_') }}"
+        content: "{{ admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+        validate: visudo -cf %s
+
+    # --- SSH ---
+    - name: Endurece SSH
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-hardening.conf
+        mode: "0644"
+        validate: /usr/sbin/sshd -t -f %s
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          AllowUsers {{ admin_user }}
+      notify: restart ssh
+
+    # --- Firewall ---
+    - name: Libera SSH, HTTP e HTTPS
+      community.general.ufw: { rule: allow, port: "{{ item }}", proto: tcp }
+      loop: ["22", "80", "443"]
+
+    - name: Bloqueia o resto por padrão
+      community.general.ufw: { default: deny, direction: incoming }
+
+    - name: Ativa o firewall
+      community.general.ufw: { state: enabled }
+
+    # --- fail2ban ---
+    - name: Configura fail2ban para SSH
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        mode: "0644"
+        content: |
+          [sshd]
+          enabled = true
+          backend = systemd
+          maxretry = 5
+          bantime = 1h
+      notify: restart fail2ban
+
+    - name: Ativa fail2ban
+      ansible.builtin.service: { name: fail2ban, state: started, enabled: true }
+
+    # --- Docker ---
+    - name: Diretório de chaves do apt
+      ansible.builtin.file:
+        { path: /etc/apt/keyrings, state: directory, mode: "0755" }
+
+    - name: Chave GPG do Docker
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Repositório do Docker
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: deb
+        uris: https://download.docker.com/linux/debian
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: stable
+        signed_by: /etc/apt/keyrings/docker.asc
+
+    - name: Instala Docker
+      ansible.builtin.apt:
+        name:
+          [
+            docker-ce,
+            docker-ce-cli,
+            containerd.io,
+            docker-buildx-plugin,
+            docker-compose-plugin,
+          ]
+        update_cache: true
+
+    - name: Admin no grupo docker
+      ansible.builtin.user:
+        { name: "{{ admin_user }}", groups: docker, append: true }
+
+    # --- SOPS + age ---
+    - name: Instala sops
+      ansible.builtin.get_url:
+        url: "https://github.com/getsops/sops/releases/download/{{ sops_version }}/sops-{{ sops_version }}.linux.amd64"
+        dest: /usr/local/bin/sops
+        mode: "0755"
+        checksum: "sha256:https://github.com/getsops/sops/releases/download/{{ sops_version }}/sops-{{ sops_version }}.checksums.txt"
+
+    - name: Diretório da chave age
+      ansible.builtin.file:
+        { path: /etc/sops/age, state: directory, mode: "0700" }
+
+    - name: Instala chave age da VPS
+      ansible.builtin.copy:
+        src: "{{ age_key_src }}"
+        dest: /etc/sops/age/keys.txt
+        mode: "0600"
+      diff: false
