@@ -1,11 +1,13 @@
 #!/bin/sh
 # Uso: decrypt-secrets.sh <pasta do stack> [uid do dono]
 set -eu
-dir="$1"
+dir="${1:?pasta do stack não informada}"
 owner="${2:-}"
 src="$dir/secrets.enc.yaml"
 out="$dir/.secrets"
 
+# Recria do zero: chave removida do YAML não pode sobrar no disco.
+rm -rf "$out"
 mkdir -p "$out"
 chmod 700 "$out"
 
