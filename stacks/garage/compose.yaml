@@ -1,0 +1,31 @@
+services:
+  garage:
+    image: dxflrs/garage:v2.4.1
+    restart: unless-stopped
+    command: ["/garage", "-c", "/etc/garage/garage.toml", "server"]
+    secrets:
+      - GARAGE_RPC_SECRET
+      - GARAGE_ADMIN_TOKEN
+      - GARAGE_METRICS_TOKEN
+    volumes:
+      - ./config:/etc/garage:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    mem_limit: 512m
+    networks: [s3]
+
+volumes:
+  garage-meta:
+  garage-data:
+
+networks:
+  s3:
+    internal: true
+
+secrets:
+  GARAGE_RPC_SECRET:
+    file: ./.secrets/GARAGE_RPC_SECRET
+  GARAGE_ADMIN_TOKEN:
+    file: ./.secrets/GARAGE_ADMIN_TOKEN
+  GARAGE_METRICS_TOKEN:
+    file: ./.secrets/GARAGE_METRICS_TOKEN
