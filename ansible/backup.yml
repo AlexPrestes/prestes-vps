@@ -62,6 +62,8 @@
           Description=Backup diário da plataforma
           [Service]
           Type=oneshot
+          CacheDirectory=restic
+          Environment=RESTIC_CACHE_DIR=/var/cache/restic
           ExecStart=/usr/local/bin/prestes-backup
       notify: reload systemd
 
