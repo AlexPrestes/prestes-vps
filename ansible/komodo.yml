@@ -1,0 +1,38 @@
+- name: Komodo
+  hosts: prestes-vps
+  become: true
+  vars:
+    komodo_src: "{{ playbook_dir }}/../komodo"
+    komodo_dir: /opt/komodo
+
+  tasks:
+    - name: Verifica suporte a AVX (exigido pelo MongoDB 5+)
+      ansible.builtin.command: grep -q avx /proc/cpuinfo
+      changed_when: false
+
+    - name: Diretórios
+      ansible.builtin.file: { path: "{{ item.path }}", state: directory, mode: "{{ item.mode }}" }
+      loop:
+        - { path: "{{ komodo_dir }}", mode: "0750" }
+        - { path: /etc/komodo, mode: "0755" }
+        - { path: /etc/komodo/backups, mode: "0750" }
+
+    - name: Arquivos do compose
+      ansible.builtin.copy:
+        src: "{{ komodo_src }}/{{ item }}"
+        dest: "{{ komodo_dir }}/{{ item }}"
+        mode: "0640"
+      loop: [compose.yaml, compose.env]
+
+    - name: Segredos descriptografados
+      ansible.builtin.copy:
+        content: "{{ lookup('community.sops.sops', komodo_src + '/secrets.enc.env', input_type='dotenv', output_type='dotenv') }}"
+        dest: "{{ komodo_dir }}/.env"
+        mode: "0600"
+      no_log: true
+
+    - name: Sobe o Komodo
+      community.docker.docker_compose_v2:
+        project_src: "{{ komodo_dir }}"
+        project_name: komodo
+        state: present
