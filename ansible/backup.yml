@@ -1,0 +1,88 @@
+- name: Backup com restic
+  hosts: prestes-vps
+  become: true
+  vars:
+    restic_repo: /var/backups/restic
+    restic_password_file: /etc/restic/password
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd: { daemon_reload: true }
+
+  tasks:
+    - name: Instala restic e rclone
+      ansible.builtin.apt: { name: [restic, rclone], state: present }
+
+    - name: Diretórios
+      ansible.builtin.file:
+        { path: "{{ item }}", state: directory, mode: "0700" }
+      loop: [/etc/restic, "{{ restic_repo }}", /var/backups/dumps]
+
+    - name: Senha do repositório
+      ansible.builtin.copy:
+        content: '{{ lookup(''community.sops.sops'', playbook_dir + ''/secrets/backup.enc.yaml'', extract=''["RESTIC_PASSWORD"]'') }}'
+        dest: "{{ restic_password_file }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Inicializa o repositório
+      ansible.builtin.command: restic -r {{ restic_repo }} --password-file {{ restic_password_file }} init
+      args: { creates: "{{ restic_repo }}/config" }
+
+    - name: Script de backup
+      ansible.builtin.copy:
+        dest: /usr/local/bin/prestes-backup
+        mode: "0700"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          export RESTIC_REPOSITORY={{ restic_repo }}
+          export RESTIC_PASSWORD_FILE={{ restic_password_file }}
+
+          # Postgres: dump completo
+          docker exec postgres-postgres-1 pg_dumpall -U postgres | gzip > /var/backups/dumps/postgres.sql.gz
+
+          # Garage: snapshot consistente dos metadados
+          docker exec garage-garage-1 /garage -c /etc/garage/garage.toml meta snapshot
+
+          restic backup --tag daily \
+            /var/backups/dumps \
+            /var/lib/docker/volumes/garage_garage-meta \
+            /var/lib/docker/volumes/garage_garage-data \
+            /etc/komodo/backups
+
+          # Retenção: 7 diários, 4 semanais, 6 mensais
+          restic forget --prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6
+
+    - name: Serviço do backup
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prestes-backup.service
+        content: |
+          [Unit]
+          Description=Backup diário da plataforma
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/prestes-backup
+      notify: reload systemd
+
+    - name: Agendamento diário
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prestes-backup.timer
+        content: |
+          [Unit]
+          Description=Agenda do backup diário
+          [Timer]
+          OnCalendar=*-*-* 03:30:00
+          Persistent=true
+          [Install]
+          WantedBy=timers.target
+      notify: reload systemd
+
+    - name: Ativa o agendamento
+      ansible.builtin.systemd:
+        {
+          name: prestes-backup.timer,
+          enabled: true,
+          state: started,
+          daemon_reload: true,
+        }
