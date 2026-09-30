@@ -14,4 +14,8 @@ deploy.prestes.cloud {
 
 auth.prestes.cloud {
 	reverse_proxy authentik:9000
+
+  	handle /setup* {
+		respond 403
+	}
 }
