@@ -42,11 +42,16 @@ services:
     restart: unless-stopped
     depends_on: [core]
     env_file: [compose.env, .env]
+    environment:
+      SOPS_AGE_KEY_FILE: /run/secrets/age_key
+    secrets:
+      - age_key
     volumes:
       - keys:/config/keys
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc:/proc
       - /etc/komodo:/etc/komodo
+      - /usr/local/bin/sops:/usr/local/bin/sops:ro
     networks: [default]
 
 volumes:
@@ -60,3 +65,7 @@ networks:
     internal: true
   edge:
     name: edge-komodo
+
+secrets:
+  age_key:
+    file: /etc/sops/age/keys.txt
