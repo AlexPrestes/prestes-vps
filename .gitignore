@@ -12,3 +12,6 @@ keys.txt
 .venv/
 __pycache__/
 .secrets/
+
+CLAUDE.md
+claude-report/

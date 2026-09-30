@@ -13,9 +13,12 @@ deploy.prestes.cloud {
 }
 
 auth.prestes.cloud {
-	reverse_proxy authentik:9000
-
-  	handle /setup* {
+	@setup path /setup* /if/flow/initial-setup* /api/v3/flows/executor/initial-setup*
+	handle @setup {
 		respond 403
+	}
+
+	handle {
+		reverse_proxy authentik:9000
 	}
 }
