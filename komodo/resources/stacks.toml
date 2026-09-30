@@ -5,3 +5,12 @@ server = "prestes-vps"
 repo = "AlexPrestes/prestes-vps"
 branch = "main"
 run_directory = "stacks/caddy"
+
+[[stack]]
+name = "postgres"
+[stack.config]
+server = "prestes-vps"
+repo = "AlexPrestes/prestes-vps"
+branch = "main"
+run_directory = "stacks/postgres"
+pre_deploy.command = "sh /etc/komodo/stacks/postgres/scripts/decrypt-secrets.sh /etc/komodo/stacks/postgres/stacks/postgres"

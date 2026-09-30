@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+    secrets:
+      - POSTGRES_PASSWORD
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    shm_size: 256mb
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [db]
+
+volumes:
+  pg-data:
+
+networks:
+  db:
+    internal: true
+
+secrets:
+  POSTGRES_PASSWORD:
+    file: ./.secrets/POSTGRES_PASSWORD
