@@ -5,6 +5,16 @@ set -eu
 name="$1"
 pass="$(cat "$2")"
 
+case "$name" in
+*[!a-z0-9_]* | "") echo "nome inválido: $name" >&2; exit 1 ;;
+esac
+case "$pass" in
+*"
+"*) echo "senha com quebra de linha não é suportada" >&2; exit 1 ;;
+esac
+# Dentro de '...' num comando do psql, \ e ' precisam de escape.
+pass="$(printf '%s' "$pass" | sed -e 's/\\/\\\\/g' -e "s/'/''/g")"
+
 {
   printf "\\set name '%s'\n\\set pass '%s'\n" "$name" "$pass"
   cat << 'SQL'
