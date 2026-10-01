@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Garante as chaves e os segredos de uma instância.
+
+Uso: scripts/init [--check]
+
+- .instance (local, fora do git) diz o nome da instância e onde está cada chave.
+- Chave que não existe é criada em ~/.config/prestes-vps/<instância>/ (padrão).
+- .sops.yaml é gerado a partir das chaves públicas.
+- Cada */secrets.spec.yaml declara o que o componente precisa; o que faltar em
+  secrets.enc.yaml é gerado ou perguntado. Valor existente nunca é sobrescrito.
+- --check não pergunta nem grava: só lista o que falta e sai com erro.
+"""
+import argparse
+import getpass
+import json
+import os
+import re
+import secrets
+import string
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+INSTANCE_FILE = ROOT / ".instance"
+CENTRAL = "secrets.enc.yaml"
+SOPS_CONFIG = ROOT / ".sops.yaml"
+SOPS_RULE = r".*\.enc\.(env|ya?ml|json)$"
+KEY_FILES = {"owner_age": "owner.agekey", "vps_age": "vps.agekey", "ssh": "ssh"}
+NAME = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+class Falta(Exception):
+    """Algo necessário não existe e --check não pode criar."""
+
+
+def sh(*cmd, **kw):
+    return subprocess.run(cmd, cwd=ROOT, check=True, text=True, **kw)
+
+
+# --- instância e chaves ---------------------------------------------------
+
+
+def load_instance(check):
+    if INSTANCE_FILE.exists():
+        return yaml.safe_load(INSTANCE_FILE.read_text())
+    if check:
+        raise Falta(".instance não existe (rode scripts/init)")
+    name = input("Nome da instância (ex.: o domínio): ").strip()
+    default_dir = f"~/.config/prestes-vps/{name}"
+    keys_dir = input(f"Diretório para chaves novas [{default_dir}]: ").strip() or default_dir
+    keys = {}
+    for key, fname in KEY_FILES.items():
+        new = f"{keys_dir}/{fname}"
+        given = input(f"Chave {key}: caminho de uma existente (Enter = criar em {new}): ").strip()
+        keys[key] = given or new
+    inst = {"name": name, "keys": keys}
+    INSTANCE_FILE.write_text(yaml.safe_dump(inst, sort_keys=False, allow_unicode=True))
+    return inst
+
+
+def ensure_key(kind, path, inst, check, central_exists):
+    if path.exists():
+        return
+    if check:
+        raise Falta(f"chave {kind} não existe: {path}")
+    if kind == "owner_age" and central_exists:
+        sys.exit(
+            f"A chave pessoal {path} não existe, mas {CENTRAL} já existe.\n"
+            "Restaure-a do gerenciador de senhas: uma chave nova não abriria os segredos."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if kind == "ssh":
+        sh("ssh-keygen", "-t", "ed25519", "-C", inst["name"], "-f", str(path))
+    else:
+        sh("age-keygen", "-o", str(path), capture_output=True)
+    print(f"criada: {path}")
+
+
+def age_public(path):
+    return sh("age-keygen", "-y", str(path), capture_output=True).stdout.strip()
+
+
+def ensure_sops_config(owner, vps, check, central_exists, env):
+    content = (
+        "creation_rules:\n"
+        f"  - path_regex: {SOPS_RULE}\n"
+        "    age: >-\n"
+        f"      {age_public(owner)},\n"
+        f"      {age_public(vps)}\n"
+    )
+    if SOPS_CONFIG.exists() and SOPS_CONFIG.read_text() == content:
+        return False
+    if check:
+        raise Falta(".sops.yaml não corresponde às chaves do .instance")
+    SOPS_CONFIG.write_text(content)
+    if central_exists:
+        sh("sops", "updatekeys", "-y", CENTRAL, env=env, capture_output=True)
+    print(".sops.yaml atualizado")
+    return True
+
+
+# --- manifestos e valores -------------------------------------------------
+
+
+def load_manifests():
+    found = {}
+    for spec in sorted(ROOT.glob("**/secrets.spec.yaml")):
+        if ".git" in spec.parts:
+            continue
+        section = spec.parent.name
+        if section == "instance" or section in found:
+            sys.exit(f"{spec}: seção '{section}' reservada ou repetida")
+        rel = spec.relative_to(ROOT)
+        data = yaml.safe_load(spec.read_text()) or {}
+        lines = [l for l in spec.read_text().splitlines() if l.strip() and not l.startswith("#")]
+        if len(lines) != len(data):
+            sys.exit(f"{rel}: use uma chave por linha")
+        for key, rule in data.items():
+            kinds = set(rule) & {"generate", "ask", "from"}
+            ok = (
+                NAME.match(key)
+                and len(kinds) == 1
+                and set(rule) <= {"generate", "ask", "from", "charset"}
+                and rule.get("charset", "alnum") in ("alnum", "hex")
+                and ("charset" not in rule or "generate" in rule)
+                and ("from" not in rule or re.match(r"^instance\.[A-Za-z0-9_]+$", rule["from"]))
+            )
+            if not ok:
+                sys.exit(f"{rel}: regra inválida em {key}")
+        found[section] = data
+    return found
+
+
+def required(manifests):
+    """(seção, chave, regra) de tudo que precisa existir no arquivo central."""
+    need = []
+    for section, data in manifests.items():
+        for key, rule in data.items():
+            if "from" in rule:
+                need.append(("instance", rule["from"].split(".", 1)[1], {"param": True}))
+            else:
+                need.append((section, key, rule))
+    return list(dict.fromkeys((s, k, json.dumps(r, sort_keys=True)) for s, k, r in need))
+
+
+def generate(rule):
+    n = rule["generate"]
+    if rule.get("charset") == "hex":
+        return secrets.token_hex(n // 2)
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(n))
+
+
+def ask(section, key, rule):
+    if rule.get("param"):
+        while not (value := input(f"{section}.{key}: ").strip()):
+            pass
+        return value
+    while True:
+        value = getpass.getpass(f"{section}.{key} (Enter = gerar): ")
+        if not value:
+            print(f"  gerada; para ver: sops -d --extract '[\"{section}\"][\"{key}\"]' {CENTRAL}")
+            return generate({"generate": 32})
+        if value == getpass.getpass("  repita: "):
+            return value
+        print("  não confere, de novo")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--check", action="store_true", help="só verifica, sem perguntar nem gravar")
+    check = parser.parse_args().check
+
+    try:
+        inst = load_instance(check)
+        keys = {k: Path(os.path.expanduser(v)) for k, v in inst["keys"].items()}
+        central_exists = (ROOT / CENTRAL).exists()
+        for kind, path in keys.items():
+            ensure_key(kind, path, inst, check, central_exists)
+        env = {**os.environ, "SOPS_AGE_KEY_FILE": str(keys["owner_age"])}
+        changed = ensure_sops_config(keys["owner_age"], keys["vps_age"], check, central_exists, env)
+
+        current = {}
+        if central_exists:
+            out = sh("sops", "-d", "--output-type", "json", CENTRAL, env=env, capture_output=True).stdout
+            current = json.loads(out)
+        manifests = load_manifests()
+        missing = [
+            (s, k, json.loads(r)) for s, k, r in required(manifests) if k not in (current.get(s) or {})
+        ]
+        if check and missing:
+            raise Falta("faltam em " + CENTRAL + ": " + ", ".join(f"{s}.{k}" for s, k, _ in missing))
+    except Falta as e:
+        sys.exit(f"init --check: {e}")
+
+    for section, data in current.items():
+        extra = set(data) - set(manifests.get(section, {})) if section != "instance" else set()
+        if section != "instance" and section not in manifests:
+            print(f"aviso: seção '{section}' sem manifesto (não foi apagada)")
+        elif extra:
+            print(f"aviso: {section}: {', '.join(sorted(extra))} sem manifesto (não apagadas)")
+
+    if check:
+        print("init --check: tudo presente")
+        return
+
+    if missing and not (ROOT / CENTRAL).exists():
+        with open(ROOT / CENTRAL, "w") as out:
+            sh("sops", "encrypt", "--filename-override", CENTRAL, input="{}", env=env, stdout=out)
+    for section, key, rule in missing:
+        value = generate(rule) if "generate" in rule else ask(section, key, rule)
+        sh("sops", "set", "--value-stdin", CENTRAL, f'["{section}"]["{key}"]',
+           input=json.dumps(value), env=env)
+        print(f"criado: {section}.{key}")
+
+    if missing or changed:
+        print(f"\nRevise e faça commit de {CENTRAL} e .sops.yaml antes do deploy.")
+    else:
+        print("nada a fazer")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit("\ninterrompido")
