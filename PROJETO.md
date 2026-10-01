@@ -53,13 +53,14 @@ simplicidade proporcional** a um projeto pessoal.
 3. **Todo passo manual é dívida.** Um passo manual só é aceito temporariamente, documentado
    na seção 8, com um plano para automatizá-lo ou transformá-lo em entrada do bootstrap.
 4. **Um único mecanismo de segredos: SOPS + age.**
-   - Segredos ficam cifrados no repositório (`*.enc.yaml` / `*.enc.env`).
+   - Segredos ficam cifrados num único arquivo no repositório (`secrets.enc.yaml`); cada
+     componente declara o que precisa num manifesto (`secrets.spec.yaml`). Ver seção 4.4.
    - Chegam aos containers **como arquivos em `/run/secrets`** (secrets do Docker Compose).
    - Nunca como valor em variável de ambiente, nunca em texto puro no repositório
      (o repositório é **público**), nunca como variável/segredo do Komodo.
    - Hash de senha também é tratado como segredo: não vai para o repositório.
    - Cada instância do template tem **suas próprias chaves age e seus próprios segredos**.
-     Os arquivos `*.enc.*` deste repositório só abrem com as chaves da instância `prestes.cloud`.
+     O `secrets.enc.yaml` commitado só abre com as chaves da instância que o gerou.
 5. **Isolamento de rede máximo.** Só o Caddy publica portas na internet. Cada aplicação
    tem redes próprias e não enxerga as outras.
 6. **Verificar antes de afirmar.** Comportamento de ferramentas deve ser confirmado na
@@ -90,7 +91,7 @@ Legenda: ✅ no ar e verificado · 🚧 em andamento · 📋 planejado (ainda n�
 | 8 | Lightdash | 📋 |
 | 9 | Agente LangChain (repositório `agent-api`) | 📋 |
 | 10 | Vitrine final e convites a visitantes | 📋 |
-| T | Template: parametrização da instância e eliminação dos passos manuais (seção 11) | 📋 |
+| T | Template: parametrização da instância e eliminação dos passos manuais (seção 11) | 🚧 chaves, segredos e usuário admin feitos (4.4) |
 
 ### Coisas que parecem incompletas, mas são intencionais agora
 
@@ -126,7 +127,7 @@ GitHub: AlexPrestes/prestes-vps  (público, fonte da verdade)
 VPS prestes.cloud  (Debian 13, Hostinger KVM 2: 2 vCPU, 8 GB RAM)
 │
 ├── HOST ─────────────── configurado pelo Ansible
-│   ├── usuário alex.prestes (SSH só por chave; root bloqueado no SSH)
+│   ├── usuário admin (instance.admin_user; SSH só por chave; root bloqueado no SSH)
 │   ├── ufw: só 22, 80, 443 · fail2ban · atualizações automáticas · swap 2 GB
 │   ├── Docker (repositório oficial)
 │   ├── sops (/usr/local/bin/sops) + chave age da VPS (/etc/sops/age/keys.txt, 0600)
@@ -181,12 +182,29 @@ cada aplicação cria sua rede `edge-<app>`, e o Caddy usa as `edge-*` como exte
 `BatchDeployStack` (e não `...IfChanged`) é usado de propósito: o deploy sempre atualiza o
 clone e roda `compose up -d`, que não recria containers se nada mudou no compose.
 
-### 4.4 Fluxo de segredos
+### 4.4 Chaves e segredos
+
+Tudo é criado e mantido por `scripts/init` (rodado pelo `./bootstrap.sh`):
+
+| Peça | Onde | No git? | Conteúdo |
+|---|---|---|---|
+| `.instance` | raiz | não | nome da instância e o caminho de cada chave (age pessoal, age da VPS, SSH) |
+| chaves | onde o `.instance` disser | não | as que o init cria vão para `~/.config/prestes-vps/<instância>/` |
+| `secrets.enc.yaml` | raiz | sim, cifrado | seção `instance` (parâmetros compartilhados, ex.: `admin_user`) e uma seção por componente |
+| `secrets.spec.yaml` | em cada componente | sim | o que o componente precisa: `generate: N [, charset: hex]`, `ask: true` ou `from: instance.X` |
+
+- A seção de um componente é o nome do diretório do manifesto: `stacks/authentik` → `authentik`,
+  `komodo` → `komodo`, `ansible` → `ansible`.
+- `scripts/init` cria o que falta (chave, `.sops.yaml`, valor) e **nunca sobrescreve**; chave
+  sem manifesto só gera aviso. `scripts/init --check` só verifica.
+- Chave pessoal ausente com `secrets.enc.yaml` existente: o init para (restaurar do gerenciador
+  de senhas; uma chave nova não abriria os segredos).
+- Manifesto com **uma chave por linha**: o lado da VPS lê com `sed` (o Periphery não tem Python).
 
 ```
-stacks/<app>/secrets.enc.yaml   (cifrado com SOPS, no repositório público)
+secrets.enc.yaml + stacks/<app>/secrets.spec.yaml
   → pre_deploy: scripts/decrypt-secrets.sh <pasta-do-stack> [uid-do-dono]
-       apaga e recria .secrets/, gera um arquivo por chave (0600), dono opcional
+       apaga e recria .secrets/, um arquivo por chave do manifesto (0600), dono opcional
   → compose.yaml declara cada arquivo em `secrets:`
   → o container lê em /run/secrets/<CHAVE>
 ```
@@ -194,9 +212,11 @@ stacks/<app>/secrets.enc.yaml   (cifrado com SOPS, no repositório público)
 - O Periphery descriptografa usando o `sops` do host (montado no container) e a chave age,
   que entra como **secret do Compose** (`/run/secrets/age_key`, com `SOPS_AGE_KEY_FILE`).
 - Aplicações que suportam leitura de arquivo usam isso diretamente
-  (`POSTGRES_PASSWORD_FILE`, `file://` do Authentik, `*_file` do Garage).
+  (`POSTGRES_PASSWORD_FILE`, `file://` do Authentik, `*_file` do Garage, `*_FILE` do Komodo).
 - `.secrets/` está no `.gitignore`.
-- O Ansible, quando precisa de segredos (Komodo, backup), usa a coleção `community.sops`.
+- Ansible: `inventory/group_vars/all/main.yml` lê o `.instance` e o `secrets.enc.yaml`
+  (lookup do `community.sops`). O Komodo segue o mesmo manifesto, em `/opt/komodo/.secrets/`.
+  Cada playbook começa com `check.yml` (`scripts/init --check` em localhost, antes de conectar).
 
 ### 4.5 Redes
 
@@ -234,7 +254,7 @@ Regras:
   `/api/v3/flows/executor/initial-setup*`, cobrindo a janela entre o container subir e o
   pós-deploy aplicar a senha.
 - Plano (fase 4b): blueprints no repositório definindo grupos `admins` e `visitantes`,
-  2FA obrigatório e o usuário pessoal `alex.prestes` (o `akadmin` vira conta de emergência).
+  2FA obrigatório e o usuário pessoal `instance.admin_user` (o `akadmin` vira conta de emergência).
   **Configuração** (aplicações, grupos, políticas, fluxos) vai no repositório;
   **pessoas** (visitantes, convites, expiração) são estado, gerenciado pela interface.
 - Plano (fase 4c em diante): cada ferramenta faz login via OIDC no Authentik;
@@ -277,37 +297,44 @@ Regras:
 
 ```
 .
+├── bootstrap.sh                  # init + checagem de commit/push + playbooks
+├── secrets.enc.yaml              # todos os valores da instância, cifrados (scripts/init)
+├── .instance                     # local, fora do git: nome da instância e caminho das chaves
 ├── ansible/
 │   ├── ansible.cfg
-│   ├── inventory/hosts.yml
+│   ├── inventory/
+│   │   ├── hosts.yml
+│   │   └── group_vars/all/main.yml   # lê .instance e secrets.enc.yaml
 │   ├── requirements.yml          # community.general, ansible.posix, community.sops, community.docker
+│   ├── check.yml                 # init --check, importado no início de cada playbook
 │   ├── bootstrap.yml             # host
 │   ├── komodo.yml                # Komodo Core + Periphery + Mongo
 │   ├── backup.yml                # restic
-│   └── secrets/backup.enc.yaml
+│   └── secrets.spec.yaml
 ├── komodo/
 │   ├── compose.yaml
 │   ├── compose.env               # configuração não secreta
-│   ├── secrets.enc.env           # segredos do Komodo (Ansible gera /opt/komodo/.secrets/<CHAVE>)
+│   ├── secrets.spec.yaml         # Ansible gera /opt/komodo/.secrets/<CHAVE>
 │   └── resources/
 │       ├── sync.toml             # o próprio Resource Sync
 │       ├── stacks.toml           # declaração dos stacks
 │       └── procedures.toml       # deploy-on-push
 ├── stacks/
 │   ├── caddy/     (compose.yaml, config/Caddyfile, site/)
-│   ├── postgres/  (compose.yaml, secrets.enc.yaml)
-│   ├── garage/    (compose.yaml, config/garage.toml, secrets.enc.yaml)
-│   └── authentik/ (compose.yaml, secrets.enc.yaml)
+│   ├── postgres/  (compose.yaml, secrets.spec.yaml)
+│   ├── garage/    (compose.yaml, config/garage.toml, secrets.spec.yaml)
+│   └── authentik/ (compose.yaml, secrets.spec.yaml)
 ├── scripts/
+│   ├── init                      # chaves, .sops.yaml e secrets.enc.yaml (Python)
 │   ├── decrypt-secrets.sh
 │   ├── pg-provision.sh
 │   ├── authentik-set-admin.sh
 │   └── check-encrypted.sh        # falha se algum *.enc.* tiver valor fora de ENC[...]
 ├── .github/workflows/
 │   └── secrets.yml               # roda o check-encrypted.sh em cada push
-├── .sops.yaml                    # regra: *.enc.(env|yaml|json) cifrados para a chave pessoal e a da VPS
+├── .sops.yaml                    # gerado pelo init: chave pessoal e a da VPS
 ├── .pre-commit-config.yaml       # gitleaks + hooks básicos + check-encrypted.sh
-└── .gitignore                    # inclui .secrets/, *.agekey, .env
+└── .gitignore                    # inclui .secrets/, .instance, *.agekey, .env
 ```
 
 ---
@@ -322,12 +349,13 @@ Regras:
    - segredos em `secrets:` apontando para `./.secrets/<CHAVE>`;
    - `mem_limit` definido (a VPS tem 8 GB);
    - sem `ports:` públicos.
-2. `stacks/<app>/secrets.enc.yaml` com `sops`.
+2. `stacks/<app>/secrets.spec.yaml` declarando as chaves; rodar `scripts/init` (gera ou
+   pergunta o que faltar) e commitar o `secrets.enc.yaml`.
 3. Se usar Postgres: adicionar a rede `db-<app>` (interna) no `stacks/postgres/compose.yaml`
    e chamar `scripts/pg-provision.sh <app> <arquivo-da-senha>` no `pre_deploy`.
 4. `komodo/resources/stacks.toml`: declarar o stack com `pre_deploy.command`
-   (e `post_deploy.command`, se necessário). Caminhos absolutos:
-   `/etc/komodo/stacks/<app>/...`.
+   (`sh /etc/komodo/stacks/<app>/scripts/decrypt-secrets.sh /etc/komodo/stacks/<app>/stacks/<app>`)
+   e `post_deploy.command`, se necessário. Caminhos absolutos: `/etc/komodo/stacks/<app>/...`.
 5. `komodo/resources/procedures.toml`: incluir `<app>` no estágio "Aplicações".
    (Mudou o procedure → rodar o sync manualmente uma vez.)
 6. `stacks/caddy/config/Caddyfile`: rota do subdomínio; e a rede `edge-<app>` como externa
@@ -339,7 +367,7 @@ Regras:
 
 ## 7. Roadmap detalhado das fases futuras
 
-- **4b — Authentik:** blueprints (grupos `admins`/`visitantes`, 2FA, usuário `alex.prestes`).
+- **4b — Authentik:** blueprints (grupos `admins`/`visitantes`, 2FA, usuário `instance.admin_user`, lido com `!File`).
   Verificar a sintaxe de blueprints na documentação da versão em uso antes de escrever.
 - **4c — Komodo com SSO:** OIDC no Komodo, rota completa em `deploy.prestes.cloud`,
   grupo de visitantes com permissão de leitura (e leitura de logs) nos recursos.
@@ -380,9 +408,10 @@ Estes passos são **manuais hoje, de forma consciente e temporária**. Não são
 configuração, mas cada um é dívida em relação ao objetivo de template automatizado
 (seção 11 diz o destino de cada um):
 
-1. Criar chaves SSH/age na máquina do dono e guardá-las no gerenciador de senhas.
+1. Guardar no gerenciador de senhas as chaves da instância (o `scripts/init` as cria).
 2. Registros DNS no painel da Hostinger.
-3. Rodar os playbooks Ansible a partir da máquina do dono.
+3. Ao (re)instalar a VPS: cadastrar a chave SSH da instância para root no painel da Hostinger
+   (e, numa reinstalação, `ssh-keygen -R <host>`); depois rodar `./bootstrap.sh`.
 4. Criar o Resource Sync `prestes-vps` na interface do Komodo, uma vez
    (repo `AlexPrestes/prestes-vps`, branch `main`, resource path `komodo/resources`).
 5. Cadastrar o webhook no GitHub apontando para o procedure `deploy-on-push`.
@@ -405,7 +434,7 @@ configuração, mas cada um é dívida em relação ao objetivo de template auto
 | Senha do `akadmin` virou o texto `file:///...` | variáveis de bootstrap não aceitam `file://` | sem bootstrap; senha aplicada no `post_deploy` |
 | Raiz do Authentik redireciona para `/setup` | setup não marcado como concluído | o script faz o mesmo que a tela oficial de setup |
 | `sudo -v` pede senha mesmo com NOPASSWD | `-v` exige que **todas** as regras sejam NOPASSWD | testar com `sudo whoami`; usuário não está no grupo `sudo` |
-| Regra de sudoers ignorada | arquivos com `.` no nome são ignorados em `sudoers.d` | nome do arquivo sem ponto (`90-alex_prestes`) |
+| Regra de sudoers ignorada | arquivos com `.` no nome são ignorados em `sudoers.d` | nome do arquivo sem ponto (`90-` + usuário com `_` no lugar de `.`) |
 
 ---
 
@@ -416,11 +445,12 @@ configuração, mas cada um é dívida em relação ao objetivo de template auto
 ssh komodo              # com LocalForward 9120 no ~/.ssh/config
 # → http://localhost:9120
 
-# Editar segredos
-sops stacks/<app>/secrets.enc.yaml
+# Editar segredos (ou apagar a chave e rodar scripts/init para gerar outra)
+sops secrets.enc.yaml
 
 # Aplicar mudanças no host
-cd ansible && ansible-playbook bootstrap.yml   # (ou komodo.yml, backup.yml)
+./bootstrap.sh                                  # tudo
+cd ansible && ansible-playbook komodo.yml       # ou só um playbook
 
 # Backup manual e verificação
 sudo systemctl start prestes-backup.service
@@ -444,9 +474,10 @@ Uma pessoa que queira a própria instância deve precisar apenas de:
 4. **um único arquivo de parâmetros** da instância (domínio, repositório, usuário admin,
    e-mail, host da VPS, chaves públicas age);
 5. **gerar os próprios segredos** (um comando que cria as chaves age e todos os
-   `*.enc.yaml` com valores aleatórios);
+   segredos com valores aleatórios) — feito: `scripts/init`;
 6. **um único comando de bootstrap** (Ansible), a partir do qual todo o resto se constrói
-   sozinho: host, Komodo, Resource Sync, webhook e todos os stacks, na ordem certa.
+   sozinho: host, Komodo, Resource Sync, webhook e todos os stacks, na ordem certa —
+   em parte: `./bootstrap.sh` (faltam Resource Sync, webhook e layout do Garage).
 
 ### 11.2 Onde a instância `prestes.cloud` está hoje
 
@@ -461,9 +492,7 @@ são **valores fixos da instância** e **passos manuais**, listados abaixo como 
 | `prestes.cloud` e subdomínios | `stacks/caddy/config/Caddyfile`, `komodo/compose.env` (`KOMODO_HOST`) |
 | `AlexPrestes/prestes-vps` | `komodo/resources/sync.toml`, `komodo/resources/stacks.toml` |
 | `prestes-vps` (nome do servidor/sync) | `komodo/compose.env`, `komodo/resources/*.toml`, `ansible/inventory` |
-| `alex.prestes` (admin) | `ansible/bootstrap.yml`, `komodo/compose.env` |
 | host/IP da VPS | `ansible/inventory/hosts.yml` |
-| chaves públicas age | `.sops.yaml` |
 | fuso `America/Sao_Paulo` | `ansible/bootstrap.yml`, `komodo/compose.env` |
 | capacidade do Garage (`40G`) | comando de layout (manual) |
 | caminhos `/etc/komodo/stacks/<stack>/...` | `pre_deploy`/`post_deploy` em `stacks.toml` (derivados do nome do stack; ok) |
@@ -472,13 +501,16 @@ Direção pretendida: um arquivo de parâmetros (ex.: `instance.yaml`) lido pelo
 **gera** os arquivos dependentes (Caddyfile, `compose.env`, TOMLs do Komodo, `.sops.yaml`)
 a partir de templates, ou que os injeta como variáveis. A forma exata ainda não foi decidida.
 
+Já parametrizados: usuário admin (`instance.admin_user`), chaves e segredos (seção 4.4);
+o `.sops.yaml` é gerado pelo `scripts/init`.
+
 **Destino de cada passo manual da seção 8:**
 
 | Passo manual | Destino no template |
 |---|---|
-| Gerar chaves SSH/age | Entrada do usuário do template (script de inicialização gera as age) |
+| Gerar chaves SSH/age | ✅ `scripts/init` (gera as que faltam ou usa as existentes) |
 | DNS | Entrada do usuário do template; opcionalmente OpenTofu |
-| Rodar os playbooks | Único comando do bootstrap (depois, também via CI) |
+| Rodar os playbooks | ✅ `./bootstrap.sh` (depois, também via CI) |
 | Criar o Resource Sync na interface | Ansible cria via API do Komodo |
 | Cadastrar o webhook no GitHub | Ansible cria via API do GitHub (ou OpenTofu) |
 | Layout do Garage | Automatizado (pós-deploy do stack ou API de administração do Garage) |
