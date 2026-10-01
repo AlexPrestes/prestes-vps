@@ -1,3 +1,5 @@
+- ansible.builtin.import_playbook: check.yml
+
 - name: Backup com restic
   hosts: prestes-vps
   become: true
@@ -20,7 +22,7 @@
 
     - name: Senha do repositório
       ansible.builtin.copy:
-        content: '{{ lookup(''community.sops.sops'', playbook_dir + ''/secrets/backup.enc.yaml'', extract=''["RESTIC_PASSWORD"]'') }}'
+        content: "{{ secrets.ansible.RESTIC_PASSWORD }}"
         dest: "{{ restic_password_file }}"
         mode: "0600"
       no_log: true

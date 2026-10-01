@@ -1,0 +1,9 @@
+# Importado no início de cada playbook: para antes de conectar se faltar
+# chave ou segredo da instância.
+- name: Instância completa
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: scripts/init --check
+      ansible.builtin.command: "{{ playbook_dir }}/../scripts/init --check"
+      changed_when: false

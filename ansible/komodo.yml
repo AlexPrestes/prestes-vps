@@ -1,9 +1,14 @@
+- ansible.builtin.import_playbook: check.yml
+
 - name: Komodo
   hosts: prestes-vps
   become: true
   vars:
     komodo_src: "{{ playbook_dir }}/../komodo"
     komodo_dir: /opt/komodo
+    komodo_spec: "{{ lookup('file', komodo_src + '/secrets.spec.yaml') | from_yaml }}"
+    # O Mongo lê os seus já como o usuário mongodb (uid 999).
+    mongo_secrets: [KOMODO_DATABASE_USERNAME, KOMODO_DATABASE_PASSWORD]
 
   tasks:
     - name: Verifica suporte a AVX (exigido pelo MongoDB 5+)
@@ -27,25 +32,25 @@
     - name: Diretório de segredos
       ansible.builtin.file: { path: "{{ komodo_dir }}/.secrets", state: directory, mode: "0700" }
 
-    # Um arquivo por chave, montado em /run/secrets pelo Compose.
-    # O Mongo lê os seus já como o usuário mongodb (uid 999).
-    - name: Segredos descriptografados
+    # Um arquivo por chave do manifesto, montado em /run/secrets pelo Compose.
+    - name: Segredos
       ansible.builtin.copy:
-        content: "{{ (lookup('community.sops.sops', komodo_src + '/secrets.enc.env', input_type='dotenv', output_type='json') | from_json)[item.key] }}"
+        content: "{{ secrets.instance[item.value['from'].split('.')[1]] if 'from' in item.value else secrets.komodo[item.key] }}"
         dest: "{{ komodo_dir }}/.secrets/{{ item.key }}"
-        owner: "{{ item.owner }}"
+        owner: "{{ '999' if item.key in mongo_secrets else 'root' }}"
         mode: "0400"
-      loop:
-        - { key: KOMODO_DATABASE_USERNAME, owner: "999" }
-        - { key: KOMODO_DATABASE_PASSWORD, owner: "999" }
-        - { key: KOMODO_INIT_ADMIN_PASSWORD, owner: root }
-        - { key: KOMODO_WEBHOOK_SECRET, owner: root }
-        - { key: KOMODO_JWT_SECRET, owner: root }
+      loop: "{{ komodo_spec | dict2items }}"
       loop_control: { label: "{{ item.key }}" }
       no_log: true
 
-    - name: Remove o .env antigo (segredos em variáveis de ambiente)
-      ansible.builtin.file: { path: "{{ komodo_dir }}/.env", state: absent }
+    - name: Segredos existentes
+      ansible.builtin.find: { paths: "{{ komodo_dir }}/.secrets" }
+      register: komodo_secret_files
+
+    - name: Remove segredos fora do manifesto
+      ansible.builtin.file: { path: "{{ item.path }}", state: absent }
+      loop: "{{ komodo_secret_files.files | rejectattr('path', 'search', '/(' ~ (komodo_spec.keys() | join('|')) ~ ')$') }}"
+      loop_control: { label: "{{ item.path | basename }}" }
 
     - name: Sobe o Komodo
       community.docker.docker_compose_v2:

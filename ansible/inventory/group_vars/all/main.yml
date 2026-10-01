@@ -1,0 +1,5 @@
+# Instância: .instance (local) e secrets.enc.yaml (central), ambos de scripts/init.
+repo_root: "{{ inventory_dir }}/../.."
+instance_config: "{{ lookup('file', repo_root ~ '/.instance') | from_yaml }}"
+secrets: "{{ lookup('community.sops.sops', repo_root ~ '/secrets.enc.yaml', rstrip=false, age_keyfile=(instance_config['keys']['owner_age'] | expanduser)) | from_yaml }}"
+instance: "{{ secrets.instance }}"

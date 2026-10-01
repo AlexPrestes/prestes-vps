@@ -1,13 +1,15 @@
+- ansible.builtin.import_playbook: check.yml
+
 - name: Bootstrap da VPS
   hosts: prestes-vps
   become: true
   vars:
-    admin_user: alex.prestes
-    admin_pubkey: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
+    admin_user: "{{ instance.admin_user }}"
+    admin_pubkey: "{{ lookup('file', (instance_config['keys']['ssh'] | expanduser) ~ '.pub') }}"
     timezone: America/Sao_Paulo
     swap_size_mb: 2048
     sops_version: v3.13.3
-    age_key_src: "{{ lookup('env', 'HOME') }}/.config/sops/age/prestes-vps.agekey"
+    age_key_src: "{{ instance_config['keys']['vps_age'] | expanduser }}"
 
   handlers:
     - name: restart ssh
