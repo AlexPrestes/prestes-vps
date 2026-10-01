@@ -12,6 +12,15 @@ case "$pass" in
 *"
 "*) echo "senha com quebra de linha não é suportada" >&2; exit 1 ;;
 esac
+# Na 1ª inicialização, o entrypoint do Postgres sobe um servidor temporário só no socket e o
+# derruba logo depois; o definitivo é o único que aceita TCP. Esperar por ele.
+i=0
+until docker exec postgres-postgres-1 pg_isready -q -h 127.0.0.1; do
+  i=$((i + 1))
+  if [ "$i" -ge 90 ]; then echo "Postgres não ficou pronto" >&2; exit 1; fi
+  sleep 2
+done
+
 # Dentro de '...' num comando do psql, \ e ' precisam de escape.
 pass="$(printf '%s' "$pass" | sed -e 's/\\/\\\\/g' -e "s/'/''/g")"
 
